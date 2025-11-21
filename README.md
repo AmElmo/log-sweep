@@ -530,5 +530,5 @@ console.log(`Removed ${removed} statements`);
 
 ---
 
-**Made with ❤️ for developers who want clean code**
+**Made with ❤️ by [AmElmo](https://github.com/AmElmo)
 
