@@ -14,7 +14,6 @@ Safely handles all edge cases that regex-based tools miss: strings containing pa
 - 🛡️ **Scope-Aware** - Never removes shadowed console objects (custom loggers, mocks)
 - 💾 **Automatic Backups** - Creates compressed backups before making changes
 - 🔄 **Easy Restore** - Restore from backup if something goes wrong
-- 🎨 **Beautiful CLI** - Interactive checkboxes, colored output, progress spinners
 - ⚡ **Dry Run Mode** - Preview changes without modifying files
 - 🔒 **Production-Safe** - Handles all edge cases that break regex-based tools
 
