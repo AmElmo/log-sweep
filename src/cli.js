@@ -233,7 +233,7 @@ async function removeCommand(directory, options) {
         return {
           name: label,
           value: method,
-          checked: method !== 'error' // Don't check error by default
+          checked: method !== 'error' && method !== 'warn' // Don't check error or warn by default
         };
       });
     
