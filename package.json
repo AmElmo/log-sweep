@@ -1,6 +1,6 @@
 {
   "name": "log-sweep",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Interactive CLI tool to scan and selectively remove console statements using AST",
   "main": "src/cli.js",
   "bin": {
