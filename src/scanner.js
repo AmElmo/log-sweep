@@ -13,8 +13,110 @@ const {
   getCurrentGitUser, 
   getUncommittedFiles,
   isLineByCurrentUser,
-  isFileUncommitted
+  isFileUncommitted,
+  getUncommittedLines,
+  isLineUncommitted
 } = require('./git');
+
+/**
+ * Check if a call expression is a console method call
+ * Supports: console.log(), console['log'](), console?.log(), etc.
+ * @param {object} node - AST node to check
+ * @param {object} path - Babel path object
+ * @returns {object|null} { method: string, isGlobal: boolean } or null
+ */
+function isConsoleMethodCall(node, path) {
+  const callee = node.callee;
+  
+  // Handle optional call expression (console?.log?.())
+  if (callee.type === 'OptionalMemberExpression') {
+    return checkMemberExpression(callee, path);
+  }
+  
+  // Handle regular member expression (console.log or console['log'])
+  if (callee.type === 'MemberExpression') {
+    return checkMemberExpression(callee, path);
+  }
+  
+  return null;
+}
+
+/**
+ * Check if a member expression is accessing the console object
+ * @param {object} memberExpr - MemberExpression or OptionalMemberExpression node
+ * @param {object} path - Babel path object
+ * @returns {object|null} { method: string, isGlobal: boolean } or null
+ */
+function checkMemberExpression(memberExpr, path) {
+  // Check if object is 'console' identifier
+  if (memberExpr.object.type !== 'Identifier' || memberExpr.object.name !== 'console') {
+    return null;
+  }
+  
+  // Check if console is the global console (not shadowed)
+  const isGlobal = !path.scope.hasBinding('console');
+  
+  // Get the method name
+  let method = null;
+  
+  if (memberExpr.property.type === 'Identifier' && !memberExpr.computed) {
+    // console.log or console?.log
+    method = memberExpr.property.name;
+  } else if (memberExpr.property.type === 'StringLiteral' && memberExpr.computed) {
+    // console['log']
+    method = memberExpr.property.value;
+  }
+  
+  if (!method) {
+    return null;
+  }
+  
+  // Check if it's a known console method
+  const knownMethods = [
+    'log', 'warn', 'info', 'debug', 'error', 'trace', 'table', 'dir', 'dirxml',
+    'assert', 'count', 'countReset', 'time', 'timeEnd', 'timeLog', 'timeStamp',
+    'group', 'groupCollapsed', 'groupEnd', 'profile', 'profileEnd', 'clear'
+  ];
+  
+  if (!knownMethods.includes(method)) {
+    return null;
+  }
+  
+  return { method, isGlobal };
+}
+
+/**
+ * Detect potential side effects in console arguments
+ * @param {array} args - Array of argument nodes
+ * @returns {boolean} True if side effects detected
+ */
+function detectSideEffects(args) {
+  let hasSideEffects = false;
+  
+  // Traverse arguments looking for side effects
+  for (const arg of args) {
+    traverse.default.cheap(arg, node => {
+      // Update expressions: ++, --
+      if (node.type === 'UpdateExpression') {
+        hasSideEffects = true;
+      }
+      // Assignment expressions: =, +=, etc.
+      if (node.type === 'AssignmentExpression') {
+        hasSideEffects = true;
+      }
+      // Await expressions
+      if (node.type === 'AwaitExpression') {
+        hasSideEffects = true;
+      }
+      // Yield expressions
+      if (node.type === 'YieldExpression') {
+        hasSideEffects = true;
+      }
+    });
+  }
+  
+  return hasSideEffects;
+}
 
 /**
  * Scan a directory for console statements
@@ -45,6 +147,7 @@ async function scanDirectory(directory, excludePatterns = [], gitOptions = {}) {
       filterUncommitted: gitOptions.gitUncommitted,
       currentUser: null,
       uncommittedFiles: null,
+      uncommittedLinesCache: new Map(), // Cache for line-level uncommitted changes
       blameCache: new Map(),
       baseDir: directory
     };
@@ -137,15 +240,18 @@ async function scanFile(filePath, gitContext = null) {
         const { node } = path;
         
         // Check if this is a console.method() call
-        if (
-          node.callee.type === 'MemberExpression' &&
-          node.callee.object.type === 'Identifier' &&
-          node.callee.object.name === 'console' &&
-          node.callee.property.type === 'Identifier'
-        ) {
-          const method = node.callee.property.name;
+        // Support direct property access (console.log) and optional chaining (console?.log)
+        const isConsoleCall = isConsoleMethodCall(node, path);
+        
+        if (isConsoleCall) {
+          const { method, isGlobal } = isConsoleCall;
           const loc = node.loc;
           const lineNumber = loc.start.line;
+          
+          // Skip if console is shadowed (not the global console)
+          if (!isGlobal) {
+            return;
+          }
           
           // Apply git filtering if enabled
           if (gitContext && gitContext.filterMine) {
@@ -163,13 +269,34 @@ async function scanFile(filePath, gitContext = null) {
             }
           }
           
+          // Apply uncommitted line filtering if enabled
+          if (gitContext && gitContext.filterUncommitted) {
+            // Get uncommitted lines for this file (cached)
+            if (!gitContext.uncommittedLinesCache.has(filePath)) {
+              const uncommittedLines = getUncommittedLines(filePath, gitContext.baseDir);
+              gitContext.uncommittedLinesCache.set(filePath, uncommittedLines);
+            }
+            
+            const uncommittedLines = gitContext.uncommittedLinesCache.get(filePath);
+            const isUncommitted = isLineUncommitted(lineNumber, uncommittedLines);
+            
+            // Skip this statement if not in uncommitted changes
+            if (!isUncommitted) {
+              return;
+            }
+          }
+          
+          // Detect potential side effects in arguments
+          const hasSideEffects = detectSideEffects(node.arguments);
+          
           statements.push({
             method,
             line: lineNumber,
             column: loc.start.column,
             endLine: loc.end.line,
             endColumn: loc.end.column,
-            code: getCodeSnippet(content, loc)
+            code: getCodeSnippet(content, loc),
+            hasSideEffects: hasSideEffects
           });
         }
       }
@@ -238,7 +365,11 @@ function getCodeSnippet(content, loc) {
  * Initialize method statistics object
  */
 function initializeMethodStats() {
-  const methods = ['log', 'warn', 'info', 'debug', 'error', 'trace', 'table', 'dir', 'dirxml', 'assert', 'count', 'time', 'timeEnd'];
+  const methods = [
+    'log', 'warn', 'info', 'debug', 'error', 'trace', 'table', 'dir', 'dirxml',
+    'assert', 'count', 'countReset', 'time', 'timeEnd', 'timeLog', 'timeStamp',
+    'group', 'groupCollapsed', 'groupEnd', 'profile', 'profileEnd', 'clear'
+  ];
   const stats = {};
   
   methods.forEach(method => {

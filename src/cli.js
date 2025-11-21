@@ -179,18 +179,61 @@ async function removeCommand(directory, options) {
     // Display summary
     displayScanResults(results);
     
+    // Check for side effects
+    const sideEffectStatements = [];
+    Object.keys(results.byFile).forEach(file => {
+      results.byFile[file].statements.forEach(stmt => {
+        if (stmt.hasSideEffects) {
+          sideEffectStatements.push({ file, stmt });
+        }
+      });
+    });
+    
+    // Show side effects warning if any found
+    if (sideEffectStatements.length > 0) {
+      console.log(chalk.yellow.bold('\n⚠️  Warning: Potential Side Effects Detected\n'));
+      console.log(chalk.yellow(`Found ${sideEffectStatements.length} console statement${sideEffectStatements.length === 1 ? '' : 's'} with potential side effects:`));
+      console.log(chalk.gray('(e.g., ++, --, assignments, await, yield)\n'));
+      
+      // Show first few examples
+      sideEffectStatements.slice(0, 5).forEach(({ file, stmt }) => {
+        const relPath = path.relative(targetDir, file);
+        console.log(chalk.gray(`  • ${relPath}:${stmt.line}`));
+        console.log(chalk.gray(`    ${stmt.code}`));
+      });
+      
+      if (sideEffectStatements.length > 5) {
+        console.log(chalk.gray(`  ... and ${sideEffectStatements.length - 5} more\n`));
+      } else {
+        console.log('');
+      }
+    }
+    
     // Interactive selection
     console.log(chalk.cyan.bold('\n📋 Select console methods to remove:\n'));
     
     const methodChoices = Object.keys(results.byMethod)
       .filter(method => results.byMethod[method].count > 0)
-      .map(method => ({
-        name: `${chalk.yellow(method.padEnd(8))} - ${results.byMethod[method].count} occurrence${results.byMethod[method].count === 1 ? '' : 's'}`,
-        value: method,
-        checked: method !== 'error' // Don't check error by default
-      }));
+      .map(method => {
+        const methodData = results.byMethod[method];
+        const sideEffectCount = Object.keys(results.byFile).reduce((count, file) => {
+          return count + results.byFile[file].statements.filter(s => 
+            s.method === method && s.hasSideEffects
+          ).length;
+        }, 0);
+        
+        const label = sideEffectCount > 0 
+          ? `${chalk.yellow(method.padEnd(8))} - ${methodData.count} occurrence${methodData.count === 1 ? '' : 's'} ${chalk.red('(⚠️ ' + sideEffectCount + ' with side effects)')}`
+          : `${chalk.yellow(method.padEnd(8))} - ${methodData.count} occurrence${methodData.count === 1 ? '' : 's'}`;
+        
+        return {
+          name: label,
+          value: method,
+          checked: method !== 'error' // Don't check error by default
+        };
+      });
     
-    const answers = await inquirer.prompt([
+    const promptQuestions = [
       {
         type: 'checkbox',
         name: 'methods',
@@ -202,14 +245,31 @@ async function removeCommand(directory, options) {
           }
           return true;
         }
-      },
-      {
-        type: 'confirm',
-        name: 'preview',
-        message: 'Would you like to preview changes before applying?',
-        default: true
       }
-    ]);
+    ];
+    
+    // Add side effects handling option if any found
+    if (sideEffectStatements.length > 0) {
+      promptQuestions.push({
+        type: 'list',
+        name: 'sideEffectsHandling',
+        message: 'How should statements with side effects be handled?',
+        choices: [
+          { name: '⊙ Skip them (safer - keep statements with side effects)', value: 'skip' },
+          { name: '○ Remove them anyway (risky - may break code logic)', value: 'remove' }
+        ],
+        default: 'skip'
+      });
+    }
+    
+    promptQuestions.push({
+      type: 'confirm',
+      name: 'preview',
+      message: 'Would you like to preview changes before applying?',
+      default: true
+    });
+    
+    const answers = await inquirer.prompt(promptQuestions);
     
     if (answers.methods.length === 0) {
       console.log(chalk.yellow('\n⚠️  No methods selected. Exiting.'));
@@ -219,17 +279,28 @@ async function removeCommand(directory, options) {
     // Calculate what will be removed
     const filesToModify = new Set();
     let statementsToRemove = 0;
+    let statementsSkipped = 0;
+    
+    const skipSideEffects = answers.sideEffectsHandling === 'skip';
     
     Object.keys(results.byFile).forEach(file => {
       const fileData = results.byFile[file];
-      const willModify = fileData.statements.some(stmt => 
-        answers.methods.includes(stmt.method)
-      );
-      if (willModify) {
+      const statementsToRemoveInFile = fileData.statements.filter(stmt => {
+        const shouldRemoveMethod = answers.methods.includes(stmt.method);
+        if (!shouldRemoveMethod) return false;
+        
+        // Skip if has side effects and user chose to skip them
+        if (skipSideEffects && stmt.hasSideEffects) {
+          statementsSkipped++;
+          return false;
+        }
+        
+        return true;
+      });
+      
+      if (statementsToRemoveInFile.length > 0) {
         filesToModify.add(file);
-        statementsToRemove += fileData.statements.filter(stmt => 
-          answers.methods.includes(stmt.method)
-        ).length;
+        statementsToRemove += statementsToRemoveInFile.length;
       }
     });
     
@@ -238,14 +309,20 @@ async function removeCommand(directory, options) {
       console.log(chalk.cyan.bold('\n📄 Preview of changes:\n'));
       console.log(chalk.white(`Files to modify: ${filesToModify.size}`));
       console.log(chalk.white(`Statements to remove: ${statementsToRemove}`));
+      if (statementsSkipped > 0) {
+        console.log(chalk.yellow(`Statements to skip (side effects): ${statementsSkipped}`));
+      }
       console.log(chalk.white(`Methods: ${answers.methods.join(', ')}\n`));
       
       // Show affected files
       Array.from(filesToModify).slice(0, 10).forEach(file => {
         const relPath = path.relative(targetDir, file);
-        const count = results.byFile[file].statements.filter(stmt => 
-          answers.methods.includes(stmt.method)
-        ).length;
+        const count = results.byFile[file].statements.filter(stmt => {
+          const shouldRemove = answers.methods.includes(stmt.method);
+          if (!shouldRemove) return false;
+          if (skipSideEffects && stmt.hasSideEffects) return false;
+          return true;
+        }).length;
         console.log(chalk.gray(`  • ${relPath} (${count} statement${count === 1 ? '' : 's'})`));
       });
       
@@ -287,12 +364,15 @@ async function removeCommand(directory, options) {
     
     // Setup git context for removal if needed
     let removerGitContext = null;
-    if (gitOptions.gitMine || gitOptions.gitUncommitted) {
+    if (gitOptions.gitMine || gitOptions.gitUncommitted || answers.sideEffectsHandling === 'skip') {
       removerGitContext = {
         enabled: true,
         filterMine: gitOptions.gitMine,
+        filterUncommitted: gitOptions.gitUncommitted,
         currentUser: gitOptions.gitMine ? getCurrentGitUser(targetDir) : null,
         blameCache: new Map(),
+        uncommittedLinesCache: new Map(), // Line-level uncommitted change cache
+        skipSideEffects: answers.sideEffectsHandling === 'skip',
         baseDir: targetDir
       };
     }

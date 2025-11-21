@@ -152,12 +152,91 @@ function isFileUncommitted(filePath, uncommittedFiles) {
   return uncommittedFiles.has(filePath);
 }
 
+/**
+ * Get uncommitted line ranges for a file
+ * Returns a Set of line numbers that have been added or modified in uncommitted changes
+ * @param {string} filePath - Absolute path to file
+ * @param {string} baseDir - Base directory for git operations
+ * @returns {Set<number>|null} Set of uncommitted line numbers, or null if file is not modified
+ */
+function getUncommittedLines(filePath, baseDir) {
+  try {
+    const relPath = path.relative(baseDir, filePath);
+    
+    // Get diff for this specific file
+    // Use --unified=0 to get only changed lines without context
+    const output = execSync(`git diff --unified=0 HEAD "${relPath}"`, {
+      cwd: baseDir,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024
+    });
+    
+    if (!output.trim()) {
+      // No diff means file is not modified or is untracked
+      // Check if file is untracked (new file) - if so, all lines are "uncommitted"
+      try {
+        execSync(`git ls-files --error-unmatch "${relPath}"`, {
+          cwd: baseDir,
+          stdio: 'ignore'
+        });
+        // File is tracked but has no diff
+        return null;
+      } catch (error) {
+        // File is untracked - all lines are uncommitted
+        return 'all'; // Special marker for untracked files
+      }
+    }
+    
+    const uncommittedLines = new Set();
+    const lines = output.split('\n');
+    
+    for (const line of lines) {
+      // Parse diff hunk headers: @@ -start,count +start,count @@
+      const match = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+      if (match) {
+        const startLine = parseInt(match[1]);
+        const lineCount = match[2] ? parseInt(match[2]) : 1;
+        
+        // Add all lines in this hunk to the set
+        for (let i = 0; i < lineCount; i++) {
+          uncommittedLines.add(startLine + i);
+        }
+      }
+    }
+    
+    return uncommittedLines;
+  } catch (error) {
+    if (process.env.DEBUG) {
+      console.error(`Warning: Could not get git diff for ${filePath}: ${error.message}`);
+    }
+    return null;
+  }
+}
+
+/**
+ * Check if a specific line in a file is uncommitted
+ * @param {number} lineNumber - Line number to check (1-indexed)
+ * @param {Set<number>|string|null} uncommittedLines - Set of uncommitted line numbers, 'all', or null
+ * @returns {boolean} True if line is uncommitted
+ */
+function isLineUncommitted(lineNumber, uncommittedLines) {
+  if (!uncommittedLines) {
+    return false; // No uncommitted changes
+  }
+  if (uncommittedLines === 'all') {
+    return true; // Untracked file - all lines are uncommitted
+  }
+  return uncommittedLines.has(lineNumber);
+}
+
 module.exports = {
   isGitRepository,
   getCurrentGitUser,
   getFileBlame,
   getUncommittedFiles,
   isLineByCurrentUser,
-  isFileUncommitted
+  isFileUncommitted,
+  getUncommittedLines,
+  isLineUncommitted
 };
 

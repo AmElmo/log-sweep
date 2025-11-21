@@ -11,8 +11,43 @@ const generate = require('@babel/generator').default;
 const tar = require('tar');
 const os = require('os');
 const { 
-  isLineByCurrentUser 
+  isLineByCurrentUser,
+  getUncommittedLines,
+  isLineUncommitted
 } = require('./git');
+
+/**
+ * Detect potential side effects in console arguments
+ * @param {array} args - Array of argument nodes
+ * @returns {boolean} True if side effects detected
+ */
+function detectSideEffects(args) {
+  let hasSideEffects = false;
+  
+  // Traverse arguments looking for side effects
+  for (const arg of args) {
+    traverse.default.cheap(arg, node => {
+      // Update expressions: ++, --
+      if (node.type === 'UpdateExpression') {
+        hasSideEffects = true;
+      }
+      // Assignment expressions: =, +=, etc.
+      if (node.type === 'AssignmentExpression') {
+        hasSideEffects = true;
+      }
+      // Await expressions
+      if (node.type === 'AwaitExpression') {
+        hasSideEffects = true;
+      }
+      // Yield expressions
+      if (node.type === 'YieldExpression') {
+        hasSideEffects = true;
+      }
+    });
+  }
+  
+  return hasSideEffects;
+}
 
 /**
  * Remove console statements from files
@@ -43,6 +78,59 @@ async function removeConsoleStatements(filePaths, methodsToRemove, dryRun = fals
 }
 
 /**
+ * Check if a call expression is a console method call
+ * (Same logic as scanner for consistency)
+ */
+function isConsoleMethodCall(node, path, methodsToRemove) {
+  const callee = node.callee;
+  
+  // Handle optional call expression (console?.log?.())
+  if (callee.type === 'OptionalMemberExpression') {
+    return checkMemberExpression(callee, path, methodsToRemove);
+  }
+  
+  // Handle regular member expression (console.log or console['log'])
+  if (callee.type === 'MemberExpression') {
+    return checkMemberExpression(callee, path, methodsToRemove);
+  }
+  
+  return null;
+}
+
+/**
+ * Check if a member expression is accessing the console object
+ */
+function checkMemberExpression(memberExpr, path, methodsToRemove) {
+  // Check if object is 'console' identifier
+  if (memberExpr.object.type !== 'Identifier' || memberExpr.object.name !== 'console') {
+    return null;
+  }
+  
+  // Check if console is the global console (not shadowed)
+  const isGlobal = !path.scope.hasBinding('console');
+  if (!isGlobal) {
+    return null; // Don't remove shadowed console
+  }
+  
+  // Get the method name
+  let method = null;
+  
+  if (memberExpr.property.type === 'Identifier' && !memberExpr.computed) {
+    // console.log or console?.log
+    method = memberExpr.property.name;
+  } else if (memberExpr.property.type === 'StringLiteral' && memberExpr.computed) {
+    // console['log']
+    method = memberExpr.property.value;
+  }
+  
+  if (!method || !methodsToRemove.includes(method)) {
+    return null;
+  }
+  
+  return { method, isGlobal: true };
+}
+
+/**
  * Remove console statements from source code
  * @param {string} sourceCode - Source code to process
  * @param {string[]} methodsToRemove - Console methods to remove
@@ -51,6 +139,17 @@ async function removeConsoleStatements(filePaths, methodsToRemove, dryRun = fals
  */
 function removeFromSource(sourceCode, methodsToRemove, filePath, gitContext = null) {
   let removedCount = 0;
+  
+  // Get uncommitted lines for this file if filtering by uncommitted changes
+  let uncommittedLines = null;
+  if (gitContext && gitContext.filterUncommitted && filePath) {
+    if (!gitContext.uncommittedLinesCache.has(filePath)) {
+      uncommittedLines = getUncommittedLines(filePath, gitContext.baseDir);
+      gitContext.uncommittedLinesCache.set(filePath, uncommittedLines);
+    } else {
+      uncommittedLines = gitContext.uncommittedLinesCache.get(filePath);
+    }
+  }
   
   try {
     // Parse source code
@@ -74,17 +173,14 @@ function removeFromSource(sourceCode, methodsToRemove, filePath, gitContext = nu
       CallExpression(path) {
         const { node } = path;
         
-        // Check if this is a console.method() call
-        if (
-          node.callee.type === 'MemberExpression' &&
-          node.callee.object.type === 'Identifier' &&
-          node.callee.object.name === 'console' &&
-          node.callee.property.type === 'Identifier' &&
-          methodsToRemove.includes(node.callee.property.name)
-        ) {
-          // Apply git filtering if enabled
+        // Check if this is a console.method() call we should remove
+        const isConsoleCall = isConsoleMethodCall(node, path, methodsToRemove);
+        
+        if (isConsoleCall) {
+          const lineNumber = node.loc.start.line;
+          
+          // Apply git author filtering if enabled
           if (gitContext && gitContext.filterMine && filePath) {
-            const lineNumber = node.loc.start.line;
             const isMyLine = isLineByCurrentUser(
               filePath, 
               lineNumber, 
@@ -95,6 +191,24 @@ function removeFromSource(sourceCode, methodsToRemove, filePath, gitContext = nu
             
             // Skip this statement if not authored by current user
             if (!isMyLine) {
+              return;
+            }
+          }
+          
+          // Apply uncommitted line filtering if enabled
+          if (gitContext && gitContext.filterUncommitted && filePath) {
+            const isUncommitted = isLineUncommitted(lineNumber, uncommittedLines);
+            
+            // Skip this statement if not in uncommitted changes
+            if (!isUncommitted) {
+              return;
+            }
+          }
+          
+          // Skip if has side effects and user wants to skip them
+          if (gitContext && gitContext.skipSideEffects) {
+            const hasSideEffects = detectSideEffects(node.arguments);
+            if (hasSideEffects) {
               return;
             }
           }
