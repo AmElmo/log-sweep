@@ -4,6 +4,8 @@
 
 Safely handles all edge cases that regex-based tools miss: strings containing parentheses, template literals, nested expressions, regex patterns, and more.
 
+<img width="431" height="409" alt="Screenshot 2025-11-21 at 12 19 04" src="https://github.com/user-attachments/assets/517b62c2-ffaf-42ee-8923-1d88c65b1ef9" />
+
 ## ✨ Features
 
 - 🔍 **AST-Based Scanning** - Uses Babel parser to understand JavaScript syntax perfectly
