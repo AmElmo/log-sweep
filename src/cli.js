@@ -15,11 +15,15 @@ const { scanDirectory } = require('./scanner');
 const { removeConsoleStatements, createBackup, restoreBackup } = require('./remover');
 const { getCurrentGitUser, isGitRepository } = require('./git');
 
-// CLI version
-const VERSION = '1.0.0';
+// CLI version (read from package.json)
+const VERSION = require('../package.json').version;
 
-// Console method types
-const CONSOLE_METHODS = ['log', 'warn', 'info', 'debug', 'error', 'trace', 'table', 'dir', 'dirxml'];
+// Console method types (for reference - actual list is in scanner.js initializeMethodStats)
+const CONSOLE_METHODS = [
+  'log', 'warn', 'info', 'debug', 'error', 'trace', 'table', 'dir', 'dirxml',
+  'assert', 'count', 'countReset', 'time', 'timeEnd', 'timeLog', 'timeStamp',
+  'group', 'groupCollapsed', 'groupEnd', 'profile', 'profileEnd', 'clear'
+];
 
 program
   .name('log-sweep')

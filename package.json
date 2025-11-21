@@ -4,8 +4,8 @@
   "description": "Interactive CLI tool to scan and selectively remove console statements using AST",
   "main": "src/cli.js",
   "bin": {
-    "log-sweep": "./src/cli.js",
-    "logsweep": "./src/cli.js"
+    "log-sweep": "src/cli.js",
+    "logsweep": "src/cli.js"
   },
   "scripts": {
     "start": "node src/cli.js",

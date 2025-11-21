@@ -9,12 +9,14 @@ Safely handles all edge cases that regex-based tools miss: strings containing pa
 - 🔍 **AST-Based Scanning** - Uses Babel parser to understand JavaScript syntax perfectly
 - 🎯 **Selective Removal** - Choose which console methods to remove (log, warn, info, debug, error, etc.)
 - 📊 **Detailed Reports** - See exactly where console statements are, by file and by method
-- 🔀 **Git-Aware Filtering** - Filter by author (so you never delete another developer's logs) or uncommitted changes for recent clean up
+- 🔀 **Git-Aware Filtering** - Filter by author or line-level uncommitted changes (team-safe!)
+- ⚠️ **Side-Effect Detection** - Warns about console statements with side effects (++, --, await, assignments)
+- 🛡️ **Scope-Aware** - Never removes shadowed console objects (custom loggers, mocks)
 - 💾 **Automatic Backups** - Creates compressed backups before making changes
 - 🔄 **Easy Restore** - Restore from backup if something goes wrong
 - 🎨 **Beautiful CLI** - Interactive checkboxes, colored output, progress spinners
 - ⚡ **Dry Run Mode** - Preview changes without modifying files
-- 🛡️ **Safe by Design** - Handles all edge cases that break regex-based tools
+- 🔒 **Production-Safe** - Handles all edge cases that break regex-based tools
 
 ## 📦 Installation
 
@@ -177,12 +179,14 @@ log-sweep remove --git-mine --git-uncommitted
 
 1. Scans your codebase
 2. Shows summary of console statements by type
-3. Lets you select which methods to remove (checkboxes)
-4. Shows preview of what will be changed
-5. Asks for confirmation
-6. Creates backup (default)
-7. Removes selected console statements
-8. Displays summary and backup location
+3. **Warns if side effects detected** (e.g., `console.log(counter++)`)
+4. Lets you select which methods to remove (checkboxes)
+5. Asks how to handle side effects (skip or remove)
+6. Shows preview of what will be changed
+7. Asks for confirmation
+8. Creates backup (default)
+9. Removes selected console statements (respecting side-effect choices)
+10. Displays summary and backup location
 
 ### `restore [backupFile]`
 
@@ -217,15 +221,20 @@ log-sweep remove --git-mine
 
 ### Filter by Uncommitted Changes (`--git-uncommitted`)
 
-Only scan/remove console statements in uncommitted changes:
+Only scan/remove console statements in **uncommitted lines** (not entire files):
 
 ```bash
-# See console statements in uncommitted files
+# See console statements in uncommitted lines only
 log-sweep scan --git-uncommitted
 
-# Pre-commit cleanup - remove from uncommitted changes only
+# Pre-commit cleanup - remove from uncommitted lines only
 log-sweep remove --git-uncommitted
 ```
+
+**How it works:**
+- Uses `git diff` to identify exact changed lines
+- Only touches console statements on those specific lines
+- Safe: won't remove teammates' committed logs in the same file
 
 **Perfect for:**
 - Pre-commit hooks
@@ -257,9 +266,19 @@ console.log("Result:", array.filter(x => (x > 0)).map(y => ({id: y})));
 
 // ❌ Regex breaks: regex patterns
 console.log("Test:", /\(.*\)/.test(str));
+
+// ❌ Regex breaks: optional chaining
+console?.log("test");
+
+// ❌ Regex breaks: computed properties
+console['log']("test");
+
+// ❌ Regex can't detect: shadowed console (would incorrectly remove!)
+const console = myLogger;
+console.log("This is NOT the global console!");
 ```
 
-**log-sweep handles ALL of these correctly** because it understands JavaScript syntax using Babel's AST parser.
+**log-sweep handles ALL of these correctly** because it understands JavaScript syntax using Babel's AST parser with full scope analysis.
 
 ## 📊 Example Output
 
@@ -298,21 +317,36 @@ Files with console statements: 45
 
 ✓ Scan complete!
 
+⚠️  Warning: Potential Side Effects Detected
+
+Found 2 console statements with potential side effects:
+(e.g., ++, --, assignments, await, yield)
+
+  • src/utils.js:45
+    console.log(counter++)
+  • src/api.js:123
+    console.log(result = await fetchData())
+
 📋 Select console methods to remove:
 
 ? Which console methods should be removed?
-  ◉ log      - 186 occurrences
+  ◉ log      - 186 occurrences (⚠️ 2 with side effects)
   ◯ error    - 54 occurrences
   ◉ warn     - 32 occurrences
   ◉ info     - 12 occurrences
   ◉ debug    - 3 occurrences
+
+? How should statements with side effects be handled?
+  ⊙ Skip them (safer - keep statements with side effects)
+  ○ Remove them anyway (risky - may break code logic)
 
 ? Would you like to preview changes before applying? (Y/n)
 
 📄 Preview of changes:
 
 Files to modify: 43
-Statements to remove: 233
+Statements to remove: 231
+Statements to skip (side effects): 2
 Methods: log, warn, info, debug
 
   • src/utils/logger.js (28 statements)
@@ -322,7 +356,7 @@ Methods: log, warn, info, debug
 ⚠️  This will modify your files. Continue? (y/N)
 
 ✓ Backup created: /tmp/log-sweep-backup-2024-01-15.tar.gz
-✓ Successfully removed 233 console statements!
+✓ Successfully removed 231 console statements!
 
 💡 To restore, run: log-sweep restore /tmp/log-sweep-backup-2024-01-15.tar.gz
 ```
@@ -330,29 +364,52 @@ Methods: log, warn, info, debug
 ## 🛡️ Safety Features
 
 1. **AST Parsing** - Understands JavaScript syntax perfectly
-2. **Git-Aware Filtering** - Filter by author or uncommitted changes (team-safe!)
-3. **Automatic Backups** - Compressed tar.gz backups before changes
-4. **Dry Run Mode** - Preview without modifying
-5. **Confirmation Prompts** - Never surprises you
-6. **Error Recovery** - Auto-restores backup on failure
-7. **Selective Removal** - Only removes what you choose
-8. **Handles Edge Cases** - Strings, regex, templates, nested code
+2. **Scope Analysis** - Never removes shadowed console objects (custom loggers, mocks)
+3. **Side-Effect Detection** - Warns about `console.log(counter++)`, `await`, assignments
+4. **Line-Level Git Filtering** - Only touches specific uncommitted lines, not entire files
+5. **Git-Aware Filtering** - Filter by author or uncommitted changes (team-safe!)
+6. **Automatic Backups** - Compressed tar.gz backups before changes
+7. **Dry Run Mode** - Preview without modifying
+8. **Confirmation Prompts** - Never surprises you
+9. **Error Recovery** - Auto-restores backup on failure
+10. **Selective Removal** - Only removes what you choose
+11. **Handles Edge Cases** - Strings, regex, templates, optional chaining, computed properties
 
 ## 🎨 Supported Console Methods
 
+All standard console methods are supported:
+
+**Common:**
 - `console.log`
 - `console.warn`
 - `console.info`
 - `console.debug`
 - `console.error`
+
+**Debugging:**
 - `console.trace`
 - `console.table`
 - `console.dir`
 - `console.dirxml`
 - `console.assert`
+
+**Counting & Timing:**
 - `console.count`
+- `console.countReset`
 - `console.time`
 - `console.timeEnd`
+- `console.timeLog`
+- `console.timeStamp`
+
+**Grouping:**
+- `console.group`
+- `console.groupCollapsed`
+- `console.groupEnd`
+
+**Profiling:**
+- `console.profile`
+- `console.profileEnd`
+- `console.clear`
 
 ## 🧪 Supported File Types
 
@@ -474,5 +531,5 @@ console.log(`Removed ${removed} statements`);
 
 ---
 
-**Made with ❤️ for developers who want clean, production-ready code**
+**Made with ❤️ for developers who want clean code**
 
