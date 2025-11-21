@@ -93,26 +93,47 @@ function checkMemberExpression(memberExpr, path) {
 function detectSideEffects(args) {
   let hasSideEffects = false;
   
-  // Traverse arguments looking for side effects
+  // Helper to recursively check node for side effects
+  function checkNode(node) {
+    if (!node || hasSideEffects) return;
+    
+    // Update expressions: ++, --
+    if (node.type === 'UpdateExpression') {
+      hasSideEffects = true;
+      return;
+    }
+    // Assignment expressions: =, +=, etc.
+    if (node.type === 'AssignmentExpression') {
+      hasSideEffects = true;
+      return;
+    }
+    // Await expressions
+    if (node.type === 'AwaitExpression') {
+      hasSideEffects = true;
+      return;
+    }
+    // Yield expressions
+    if (node.type === 'YieldExpression') {
+      hasSideEffects = true;
+      return;
+    }
+    
+    // Recursively check child nodes
+    for (const key in node) {
+      if (key === 'loc' || key === 'type') continue;
+      const child = node[key];
+      if (Array.isArray(child)) {
+        child.forEach(checkNode);
+      } else if (child && typeof child === 'object' && child.type) {
+        checkNode(child);
+      }
+    }
+  }
+  
+  // Check all arguments
   for (const arg of args) {
-    traverse.default.cheap(arg, node => {
-      // Update expressions: ++, --
-      if (node.type === 'UpdateExpression') {
-        hasSideEffects = true;
-      }
-      // Assignment expressions: =, +=, etc.
-      if (node.type === 'AssignmentExpression') {
-        hasSideEffects = true;
-      }
-      // Await expressions
-      if (node.type === 'AwaitExpression') {
-        hasSideEffects = true;
-      }
-      // Yield expressions
-      if (node.type === 'YieldExpression') {
-        hasSideEffects = true;
-      }
-    });
+    checkNode(arg);
+    if (hasSideEffects) break;
   }
   
   return hasSideEffects;
