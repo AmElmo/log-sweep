@@ -1,0 +1,11 @@
+node_modules/
+.git/
+.gitignore
+*.log
+coverage/
+.env
+.env.local
+*.tar.gz
+console-report.json
+QUICK_DEMO.txt
+.DS_Store

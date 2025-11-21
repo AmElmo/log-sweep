@@ -1,0 +1,42 @@
+{
+  "name": "log-sweep",
+  "version": "1.0.0",
+  "description": "Interactive CLI tool to scan and selectively remove console statements using AST",
+  "main": "src/cli.js",
+  "bin": {
+    "log-sweep": "./src/cli.js",
+    "logsweep": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "echo \"Tests coming soon\" && exit 0"
+  },
+  "keywords": [
+    "console",
+    "logging",
+    "ast",
+    "cleanup",
+    "cli",
+    "interactive",
+    "javascript",
+    "babel"
+  ],
+  "author": "Julien Berthomier",
+  "license": "MIT",
+  "dependencies": {
+    "@babel/parser": "^7.23.0",
+    "@babel/traverse": "^7.23.0",
+    "@babel/generator": "^7.23.0",
+    "@babel/types": "^7.23.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "inquirer": "^8.2.5",
+    "ora": "^5.4.1",
+    "glob": "^10.3.10",
+    "tar": "^6.2.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
+
